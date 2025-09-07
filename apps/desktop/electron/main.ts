@@ -9,6 +9,8 @@ let win: BrowserWindow | null = null;
 let worker: Worker | null = null;          // <— declare BEFORE ensureWorker
 let activeRunId: string | null = null;
 
+app.commandLine.appendSwitch("remote-debugging-port", "9222");
+
 /** Send a line to the renderer timeline */
 function sendLog(obj: { msg: string; level?: "info" | "error"; runId?: string }) {
   win?.webContents.send("agent:log", {

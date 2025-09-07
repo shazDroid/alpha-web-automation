@@ -1,9 +1,45 @@
 import { parentPort } from "node:worker_threads";
 import { runGoal } from "./run.js";
 import type { Step } from "./graph.js";
+import { chromium, Browser, BrowserContext, Page } from "playwright";
+
 
 if (!parentPort) process.exit(1);
 let pausedResolve: null | (() => void) = null;
+
+async function attachToEmbeddedWebview(): Promise<{
+    browser: Browser;
+    context: BrowserContext;
+    page: Page;
+}> {
+    // Attach to Electron (port set in main.ts)
+    const browser = await chromium.connectOverCDP("http://localhost:9222");
+
+    // Electron usually exposes a single default context
+    const [context = browser.contexts()[0]] = browser.contexts();
+
+    // Helper: pick a real web page (not chrome:// or devtools://)
+    const pick = (pages: Page[]) =>
+        pages.find(p => !/^chrome:|^devtools:/.test(p.url())) ?? pages[pages.length - 1];
+
+    let page = pick(context.pages());
+
+    // If the <webview> target isn’t ready yet, wait briefly for it
+    if (!page) {
+        page = await new Promise<Page>((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("Timed out waiting for webview target")), 6000);
+            context.once("page", (p) => {
+                if (!/^chrome:|^devtools:/.test(p.url())) {
+                    clearTimeout(timeout);
+                    resolve(p);
+                }
+            });
+        });
+    }
+
+    return { browser, context, page };
+}
+
 
 parentPort.on("message", async (msg: any) => {
     switch (msg.type) {

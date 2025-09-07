@@ -31,6 +31,7 @@ var import_node_crypto = __toESM(require("node:crypto"));
 var win = null;
 var worker = null;
 var activeRunId = null;
+import_electron.app.commandLine.appendSwitch("remote-debugging-port", "9222");
 function sendLog(obj) {
   win?.webContents.send("agent:log", {
     runId: obj.runId ?? activeRunId ?? "default",
