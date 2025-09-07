@@ -1,6 +1,6 @@
 import { parentPort } from "node:worker_threads";
-import { runGoal } from "./run";
-import type { Step } from "./graph";
+import { runGoal } from "./run.js";
+import type { Step } from "./graph.js";
 
 if (!parentPort) process.exit(1);
 let pausedResolve: null | (() => void) = null;

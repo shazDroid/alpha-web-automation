@@ -39,46 +39,46 @@ function sendLog(obj) {
     at: Date.now()
   });
 }
-var exists = (p) => {
-  try {
-    return import_node_fs.default.existsSync(p);
-  } catch {
-    return false;
-  }
-};
 function agentBaseDir() {
   const candidates = [
     import_node_path.default.resolve(import_electron.app.getAppPath(), "..", "packages", "agent"),
     import_node_path.default.resolve(__dirname, "..", "..", "..", "packages", "agent"),
     import_node_path.default.resolve(process.cwd(), "..", "packages", "agent")
   ];
-  for (const p of candidates) if (exists(p)) return p;
+  for (const p of candidates) if (import_node_fs.default.existsSync(p)) return p;
   throw new Error(
     `Could not locate packages/agent. Tried:
 ${candidates.map((p) => " - " + p).join("\n")}`
   );
 }
-function resolveWorkerEntrypoint() {
+function resolveWorkerPaths() {
   const base = agentBaseDir();
-  const distWorker = import_node_path.default.join(base, "dist", "worker.js");
-  const distRun = import_node_path.default.join(base, "dist", "run.js");
-  const srcWorker = import_node_path.default.join(base, "src", "worker.ts");
-  if (import_node_fs.default.existsSync(distWorker) && import_node_fs.default.existsSync(distRun)) {
-    return { entry: distWorker };
-  }
-  if (import_node_fs.default.existsSync(srcWorker)) {
-    return { entry: srcWorker, execArgv: ["--loader", "ts-node/esm"] };
-  }
-  throw new Error(`Agent worker entry not found:
-  - ${distWorker}
-  - ${distRun}
-  - ${srcWorker}`);
+  return {
+    js: import_node_path.default.join(base, "dist", "worker.js"),
+    // built output
+    ts: import_node_path.default.join(base, "src", "worker.ts")
+    // dev source
+  };
 }
 function ensureWorker() {
   if (worker && worker.threadId) return worker;
-  const { entry, execArgv } = resolveWorkerEntrypoint();
-  console.log("[main] launching worker:", entry);
-  worker = new import_node_worker_threads.Worker(entry, execArgv?.length ? { execArgv } : void 0);
+  const { js, ts } = resolveWorkerPaths();
+  if (import_node_fs.default.existsSync(js)) {
+    console.log("[main] launching worker (built JS):", js);
+    worker = new import_node_worker_threads.Worker(js);
+  } else if (import_node_fs.default.existsSync(ts)) {
+    console.log("[main] launching worker (ts-node/esm):", ts);
+    worker = new import_node_worker_threads.Worker(ts, {
+      execArgv: ["--loader", "ts-node/esm"]
+    });
+  } else {
+    throw new Error(
+      `Worker entry not found:
+ - ${js}
+ - ${ts}
+If you want to run the built worker, run: npm run build -w packages/agent`
+    );
+  }
   worker.on("message", (msg) => {
     if (typeof msg === "string") return sendLog({ msg });
     if (msg?.channel === "log") {
@@ -99,7 +99,7 @@ function ensureWorker() {
 }
 function createWindow() {
   const preloadPath = import_node_path.default.join(__dirname, "preload.js");
-  console.log("[main] preload at:", preloadPath, exists(preloadPath) ? "(exists)" : "(MISSING)");
+  sendLog({ msg: `[main] preload at: ${preloadPath} ${import_node_fs.default.existsSync(preloadPath) ? "(exists)" : "(MISSING)"}` });
   win = new import_electron.BrowserWindow({
     width: 1400,
     height: 900,
@@ -108,10 +108,11 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true
+      // you use <webview>
     }
   });
   win.webContents.on("did-finish-load", () => {
-    console.log("[main] renderer loaded:", win?.webContents.getURL());
+    sendLog({ msg: `[main] renderer loaded: ${win?.webContents.getURL()}` });
   });
   const devUrl = process.env.ELECTRON_START_URL || process.env.VITE_DEV_SERVER_URL || "http://localhost:5173";
   if (devUrl && !import_electron.app.isPackaged) {
@@ -145,9 +146,6 @@ import_electron.ipcMain.handle("agent:resume", async () => {
   worker?.postMessage({ type: "resume" });
   return { ok: true };
 });
-import_electron.ipcMain.handle(
-  "shell:showInFolder",
-  (_e, filePath) => import_electron.shell.showItemInFolder(filePath)
-);
+import_electron.ipcMain.handle("shell:showInFolder", (_e, filePath) => import_electron.shell.showItemInFolder(filePath));
 import_electron.ipcMain.handle("alpha:hello", () => "ok");
 //# sourceMappingURL=main.js.map

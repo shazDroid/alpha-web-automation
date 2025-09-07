@@ -1,13 +1,15 @@
+// apps/desktop/electron/main.ts
 import fs from "node:fs";
 import path from "node:path";
-import {app, BrowserWindow, ipcMain, shell} from "electron";
-import {Worker} from "node:worker_threads";
+import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { Worker } from "node:worker_threads";
 import crypto from "node:crypto";
 
 let win: BrowserWindow | null = null;
-let worker: Worker | null = null;
+let worker: Worker | null = null;          // <— declare BEFORE ensureWorker
 let activeRunId: string | null = null;
 
+/** Send a line to the renderer timeline */
 function sendLog(obj: { msg: string; level?: "info" | "error"; runId?: string }) {
   win?.webContents.send("agent:log", {
     runId: obj.runId ?? activeRunId ?? "default",
@@ -17,59 +19,100 @@ function sendLog(obj: { msg: string; level?: "info" | "error"; runId?: string })
   });
 }
 
-const exists = (p: string) => {
-  try {
-    return fs.existsSync(p);
-  } catch {
-    return false;
-  }
-};
 
-/** Find the monorepo's packages/agent directory in dev & prod */
+/** Create / (re)use worker */
+function agentPackageJson(): any {
+  const base = agentBaseDir();
+  const pkg = path.join(base, "package.json");
+  try { return JSON.parse(fs.readFileSync(pkg, "utf8")); } catch { return null; }
+}
+
+function resolveWorkerEntrypoint(): {
+  entry: string;
+  type?: "module" | "commonjs";
+  execArgv?: string[];
+} {
+  const base = agentBaseDir();
+  const exts = [".js", ".mjs", ".cjs"];
+
+  const findFirst = (relNoExt: string) => {
+    for (const ext of exts) {
+      const p = path.join(base, relNoExt + ext);
+      if (fs.existsSync(p)) return p;
+    }
+    return null;
+  };
+
+  const pkg = agentPackageJson();
+  const isESM = pkg?.type === "module";
+
+  const distWorker = findFirst("dist/worker");
+  const distRun    = findFirst("dist/run");
+
+  // Only use dist when the build is complete (worker + run)
+  if (distWorker && distRun) {
+    return { entry: distWorker, type: isESM ? "module" : "commonjs" };
+  }
+
+  // Dev fallback: run TS directly with ts-node ESM loader
+  const srcWorker = path.join(base, "src", "worker.ts");
+  if (fs.existsSync(srcWorker)) {
+    return {
+      entry: srcWorker,
+      type: "module",
+      execArgv: ["--loader", "ts-node/esm"], // <— THIS is critical
+    };
+  }
+
+  throw new Error(
+      `Agent worker entry not found.
+     Tried:
+       - ${path.join(base, "dist/worker.(js|mjs|cjs)")}
+       - ${path.join(base, "dist/run.(js|mjs|cjs)")}
+       - ${srcWorker}`
+  );
+}
+
 function agentBaseDir(): string {
   const candidates = [
     path.resolve(app.getAppPath(), "..", "packages", "agent"),
     path.resolve(__dirname, "..", "..", "..", "packages", "agent"),
     path.resolve(process.cwd(), "..", "packages", "agent"),
   ];
-  for (const p of candidates) if (exists(p)) return p;
+  for (const p of candidates) if (fs.existsSync(p)) return p;
   throw new Error(
       `Could not locate packages/agent. Tried:\n${candidates.map((p) => " - " + p).join("\n")}`
   );
 }
 
-function resolveWorkerEntrypoint(): { entry: string; execArgv?: string[] } {
-  const base = agentBaseDir(); // .../packages/agent
-
-  const distWorker = path.join(base, "dist", "worker.js");
-  const distRun    = path.join(base, "dist", "run.js");
-  const srcWorker  = path.join(base, "src", "worker.ts");
-
-  // Use dist only if ALL required outputs exist (packaged or dev)
-  if (fs.existsSync(distWorker) && fs.existsSync(distRun)) {
-    return { entry: distWorker };
-  }
-
-  // Fallback to TS in dev via ts-node loader
-  if (fs.existsSync(srcWorker)) {
-    return { entry: srcWorker, execArgv: ["--loader", "ts-node/esm"] };
-    // If you prefer CJS register instead:
-    // return { entry: srcWorker, execArgv: ["-r", "ts-node/register/transpile-only"] };
-  }
-
-  throw new Error(`Agent worker entry not found:
-  - ${distWorker}
-  - ${distRun}
-  - ${srcWorker}`);
+function resolveWorkerPaths() {
+  const base = agentBaseDir();
+  return {
+    js: path.join(base, "dist", "worker.js"), // built output
+    ts: path.join(base, "src", "worker.ts"),  // dev source
+  };
 }
 
-function ensureWorker() {
+function ensureWorker(): Worker {
   if (worker && worker.threadId) return worker;
 
-  const { entry, execArgv } = resolveWorkerEntrypoint();
-  console.log("[main] launching worker:", entry);
+  const { js, ts } = resolveWorkerPaths();
 
-  worker = new Worker(entry, execArgv?.length ? { execArgv } : undefined);
+  if (fs.existsSync(js)) {
+    // Prefer built JS when available (stable)
+    console.log("[main] launching worker (built JS):", js);
+    worker = new Worker(js); // <-- no `type` option
+  } else if (fs.existsSync(ts)) {
+    console.log("[main] launching worker (ts-node/esm):", ts);
+    worker = new Worker(ts, {
+      execArgv: ["--loader", "ts-node/esm"],
+    });
+  } else {
+    throw new Error(
+        `Worker entry not found:\n - ${js}\n - ${ts}\n` +
+        `If you want to run the built worker, run: npm run build -w packages/agent`
+    );
+  }
 
   worker.on("message", (msg: any) => {
     if (typeof msg === "string") return sendLog({ msg });
@@ -84,15 +127,16 @@ function ensureWorker() {
   });
 
   worker.on("error", (err) => sendLog({ level: "error", msg: `[worker error] ${err.message}` }));
-  worker.on("exit", (code) => { sendLog({ msg: `[worker exit] code=${code}` }); worker = null; });
+  worker.on("exit",  (code) => { sendLog({ msg: `[worker exit] code=${code}` }); worker = null; });
 
   return worker;
 }
 
 
+/** BrowserWindow */
 function createWindow() {
   const preloadPath = path.join(__dirname, "preload.js");
-  console.log("[main] preload at:", preloadPath, exists(preloadPath) ? "(exists)" : "(MISSING)");
+  sendLog({ msg: `[main] preload at: ${preloadPath} ${fs.existsSync(preloadPath) ? "(exists)" : "(MISSING)"}` });
 
   win = new BrowserWindow({
     width: 1400,
@@ -101,12 +145,12 @@ function createWindow() {
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
-      webviewTag: true,
+      webviewTag: true, // you use <webview>
     },
   });
 
   win.webContents.on("did-finish-load", () => {
-    console.log("[main] renderer loaded:", win?.webContents.getURL());
+    sendLog({ msg: `[main] renderer loaded: ${win?.webContents.getURL()}` });
   });
 
   const devUrl =
@@ -121,7 +165,7 @@ function createWindow() {
   }
 }
 
-// ---- App lifecycle
+/* ---------- app lifecycle ---------- */
 app.whenReady().then(createWindow);
 
 app.on("window-all-closed", () => {
@@ -132,12 +176,12 @@ app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
-// ---- IPC
+/* ---------- IPC ---------- */
 ipcMain.handle("agent:run", async (_e, { task, selectorBundle }) => {
   const runId = crypto.randomUUID();
   activeRunId = runId;
   ensureWorker().postMessage({ type: "run", runId, task, selectorBundle });
-  return {ok: true, runId};
+  return { ok: true, runId };
 });
 
 ipcMain.handle("agent:stop", async () => {
@@ -153,9 +197,5 @@ ipcMain.handle("agent:resume", async () => {
   return { ok: true };
 });
 
-ipcMain.handle("shell:showInFolder", (_e, filePath: string) =>
-    shell.showItemInFolder(filePath)
-);
-
-// tiny debug helper so you can test the bridge from console: await window.alpha?.hello?.()
+ipcMain.handle("shell:showInFolder", (_e, filePath: string) => shell.showItemInFolder(filePath));
 ipcMain.handle("alpha:hello", () => "ok");

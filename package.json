@@ -7,6 +7,8 @@
     "packages/shared"
   ],
   "scripts": {
+    "build:agent": "npm run build --prefix packages/agent",
+    "predev": "npm run build:agent",
     "dev:ui": "npm run dev --prefix apps/desktop/ui",
     "build:ui": "npm run build --prefix apps/desktop/ui",
     "preview:ui": "npm run preview --prefix apps/desktop/ui",

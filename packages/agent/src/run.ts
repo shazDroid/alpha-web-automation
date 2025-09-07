@@ -1,4 +1,4 @@
-import { buildGraph, launchBrowser, RunState, Step } from "./graph";
+import { buildGraph, launchBrowser, RunState, Step } from "./graph.js";
 
 export async function runGoal(
     goal: string,
