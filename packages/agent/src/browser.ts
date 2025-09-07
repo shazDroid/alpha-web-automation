@@ -1,74 +1,83 @@
 import { chromium, Browser, BrowserContext, Page } from "playwright";
+import { parentPort } from "worker_threads";
 
-// --- URLs to ignore so we attach to the <webview> instead of the shell
-const UI_ORIGINS = [
-    /^http:\/\/localhost:5173/i,     // dev UI
-    /^file:.*\/index\.html$/i        // packaged UI
-];
+// --- 1) Wait until main notifies that the <webview> is alive -----------------
+let resolveWebview!: (id: number) => void;
+const webviewReady = new Promise<number>((r) => (resolveWebview = r));
 
-const isSystemUrl = (u: string) => /^chrome:|^devtools:|^edge:/.test(u);
-const isUiUrl     = (u: string) => UI_ORIGINS.some(r => r.test(u));
-
-let cached: { browser: Browser; context: BrowserContext; page: Page } | null = null;
-
-/**
- * Scan existing contexts for a guest page (the <webview>) that is neither
- * a system URL nor the app shell (localhost:5173/file://…/index.html).
- */
-async function pickGuestPage(browser: Browser): Promise<{ context: BrowserContext; page: Page } | null> {
-    for (const ctx of browser.contexts()) {
-        const page = ctx.pages().find(p => {
-            const u = p.url();
-            return u && !isSystemUrl(u) && !isUiUrl(u);
-        });
-        if (page) return { context: ctx, page };
-    }
-    return null;
+// Add near the top of the file
+function isAppUrl(u: string): boolean {
+    if (!u) return false;
+    // exclude your renderer (dev server or packaged index)
+    return u.startsWith("http://localhost:5173")
+        || u.startsWith("http://127.0.0.1:5173")
+        || u.startsWith("file://");
 }
 
-/**
- * Like before, but without any invalid Browser events.
- * We connect to the Electron CDP, try to find an existing guest page, and
- * if not present, we poll briefly until it appears.
- */
-export async function getAttachedPage(): Promise<{ browser: Browser; context: BrowserContext; page: Page }> {
-    if (cached) return cached;
+function pickGuestPage(pages: import("playwright").Page[]) {
+    // Prefer non-app pages; the webview guest will usually show as about:blank first,
+    // then your real target URL.
+    const nonApp = pages.filter(p => !isAppUrl(p.url()));
+    if (nonApp.length) return nonApp[nonApp.length - 1];
+    // Fallback to last page if we couldn't filter (keeps previous behaviour)
+    return pages[pages.length - 1];
+}
 
-    // Electron main must be started with --remote-debugging-port=9222
-    const browser = await chromium.connectOverCDP("http://localhost:9222");
 
-    // 1) Try current contexts first
-    const foundNow = await pickGuestPage(browser);
-    if (foundNow) {
-        cached = { browser, ...foundNow };
-        console.log("[agent] attached to webview:", foundNow.page.url());
-        return cached;
+parentPort?.on("message", (msg: any) => {
+    if (msg?.type === "webview-ready" && typeof msg.webContentsId === "number") {
+        resolveWebview(msg.webContentsId);
+    }
+});
+
+// --- 2) Small helpers ---------------------------------------------------------
+function isRealHttpUrl(u: string) {
+    return /^https?:\/\//i.test(u);
+}
+
+function isNoiseUrl(u: string) {
+    return (
+        !u ||
+        u === "about:blank" ||
+        u.startsWith("devtools://") ||
+        u.startsWith("chrome://")
+    );
+}
+
+// --- 3) The only thing agents should call ------------------------------------
+export async function getAttachedPage(): Promise<{
+    browser: Browser;
+    context: BrowserContext;
+    page: Page;
+}> {
+    // (a) wait for the renderer's <webview> to be attached
+    await webviewReady;
+
+    // (b) connect to Electron's CDP (enabled by main.ts via remote-debugging-port=9222)
+    const browser = await chromium.connectOverCDP("http://127.0.0.1:9222");
+
+    // (c) Electron's default context holds our guest page(s)
+    let context = browser.contexts()[0];
+    let pages = context.pages();
+
+// Wait a moment for the guest to appear if needed
+    const giveUpAt = Date.now() + 5000;
+    while (pages.filter(p => !isAppUrl(p.url())).length === 0 && Date.now() < giveUpAt) {
+        await new Promise(r => setTimeout(r, 100));
+        pages = context.pages();
     }
 
-    // 2) Poll briefly for the webview to appear
-    const deadline = Date.now() + 10_000;
-    while (Date.now() < deadline) {
-        const foundLater = await pickGuestPage(browser);
-        if (foundLater) {
-            cached = { browser, ...foundLater };
-            console.log("[agent] attached to webview (late):", foundLater.page.url());
-            return cached;
+    const page = pickGuestPage(pages);
+// optional: double check we didn’t pick your app page
+    if (isAppUrl(page.url())) {
+        // as a last resort, wait a little and try again once
+        await new Promise(r => setTimeout(r, 300));
+        pages = context.pages();
+        const retry = pickGuestPage(pages);
+        if (!isAppUrl(retry.url())) {
+            return { browser, context, page: retry };
         }
-        await new Promise(r => setTimeout(r, 150));
     }
 
-    throw new Error("Timed out waiting for webview page (guest) to appear");
-}
-
-// Optional: a strict guard to guarantee nobody launches a new browser
-export function assertNoLaunch(): void {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const anyChromium = chromium as any;
-    const orig = anyChromium.launch;
-    anyChromium.launch = async () => {
-        throw new Error(
-            "[guard] chromium.launch() was called. Use getAttachedPage() from packages/agent/src/browser.ts instead."
-        );
-    };
-    // You can restore with: anyChromium.launch = orig;
+    return { browser, context, page };
 }

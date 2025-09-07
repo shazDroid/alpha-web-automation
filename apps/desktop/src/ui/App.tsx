@@ -93,6 +93,14 @@ export default function App() {
   const toggleColorScheme = () =>
       setColorScheme(computed === 'dark' ? 'light' : 'dark')
 
+  useEffect(() => {
+    const el = document.getElementById('alpha-webview') as any | null;
+    if (!el) return;
+    const noop = () => {};
+    el.addEventListener('dom-ready', noop);
+    return () => el.removeEventListener('dom-ready', noop);
+  }, []);
+
 
   useEffect(() => {
     const off = alpha()?.onLog?.((p) => {

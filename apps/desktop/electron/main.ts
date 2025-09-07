@@ -1,15 +1,20 @@
 // apps/desktop/electron/main.ts
 import fs from "node:fs";
 import path from "node:path";
-import { app, BrowserWindow, ipcMain, shell } from "electron";
-import { Worker } from "node:worker_threads";
+import {app, BrowserWindow, ipcMain, shell} from "electron";
+import {Worker} from "node:worker_threads";
 import crypto from "node:crypto";
+import WebContents = Electron.WebContents;
 
 let win: BrowserWindow | null = null;
 let worker: Worker | null = null;          // <— declare BEFORE ensureWorker
 let activeRunId: string | null = null;
+let lastWebviewGuestId: number | null = null;
 
 app.commandLine.appendSwitch("remote-debugging-port", "9222");
+app.commandLine.appendSwitch("remote-allow-origins", "*");
+
+let latestWebviewId: number | null = null;
 
 /** Send a line to the renderer timeline */
 function sendLog(obj: { msg: string; level?: "info" | "error"; runId?: string }) {
@@ -86,6 +91,10 @@ function ensureWorker(): Worker {
   worker.on("error", (err) => sendLog({ level: "error", msg: `[worker error] ${err.message}` }));
   worker.on("exit",  (code) => { sendLog({ msg: `[worker exit] code=${code}` }); worker = null; });
 
+  if (lastWebviewGuestId != null) {
+    worker.postMessage({ type: "webview-ready", webContentsId: lastWebviewGuestId });
+  }
+
   return worker;
 }
 
@@ -102,8 +111,14 @@ function createWindow() {
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
-      webviewTag: true, // you use <webview>
+      webviewTag: true,
     },
+  });
+
+  win.webContents.on("did-attach-webview", (_e, guest: WebContents) => {
+    latestWebviewId = guest.id;
+    sendLog({msg: `[main] webview attached (guest id=${guest.id})`});
+    worker?.postMessage({type: "webview-ready", webContentsId: guest.id});
   });
 
   win.webContents.on("did-finish-load", () => {
@@ -133,8 +148,21 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 }
 
+function notifyWorkerWebviewReady(id: number) {
+  lastWebviewGuestId = id;
+  if (worker) {
+    worker.postMessage({ type: "webview-ready", webContentsId: id });
+  }
+}
+
 /* ---------- app lifecycle ---------- */
 app.whenReady().then(createWindow);
+app.on("web-contents-created", (_event, contents) => {
+  if (contents.getType() === "webview") {
+    notifyWorkerWebviewReady(contents.id);
+    contents.once("dom-ready", () => notifyWorkerWebviewReady(contents.id));
+  }
+});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
@@ -156,14 +184,25 @@ ipcMain.handle("agent:stop", async () => {
   worker?.postMessage({ type: "stop" });
   return { ok: true };
 });
+
 ipcMain.handle("agent:takeOver", async () => {
   worker?.postMessage({ type: "takeOver" });
   return { ok: true };
 });
+
 ipcMain.handle("agent:resume", async () => {
   worker?.postMessage({ type: "resume" });
   return { ok: true };
 });
+
+ipcMain.handle("webview:ready", (_e, id: number) => {
+  latestWebviewId = id;
+  sendLog({msg: `[main] webview:ready (guest id=${id})`});
+  worker?.postMessage({type: "webview-ready", webContentsId: id});
+  return {ok: true};
+});
+
+ipcMain.handle("webview:get-latest", () => latestWebviewId);
 
 ipcMain.handle("shell:showInFolder", (_e, filePath: string) => shell.showItemInFolder(filePath));
 ipcMain.handle("alpha:hello", () => "ok");

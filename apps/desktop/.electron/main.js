@@ -31,7 +31,10 @@ var import_node_crypto = __toESM(require("node:crypto"));
 var win = null;
 var worker = null;
 var activeRunId = null;
+var lastWebviewGuestId = null;
 import_electron.app.commandLine.appendSwitch("remote-debugging-port", "9222");
+import_electron.app.commandLine.appendSwitch("remote-allow-origins", "*");
+var latestWebviewId = null;
 function sendLog(obj) {
   win?.webContents.send("agent:log", {
     runId: obj.runId ?? activeRunId ?? "default",
@@ -96,6 +99,9 @@ If you want to run the built worker, run: npm run build -w packages/agent`
     sendLog({ msg: `[worker exit] code=${code}` });
     worker = null;
   });
+  if (lastWebviewGuestId != null) {
+    worker.postMessage({ type: "webview-ready", webContentsId: lastWebviewGuestId });
+  }
   return worker;
 }
 function createWindow() {
@@ -109,8 +115,12 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true
-      // you use <webview>
     }
+  });
+  win.webContents.on("did-attach-webview", (_e, guest) => {
+    latestWebviewId = guest.id;
+    sendLog({ msg: `[main] webview attached (guest id=${guest.id})` });
+    worker?.postMessage({ type: "webview-ready", webContentsId: guest.id });
   });
   win.webContents.on("did-finish-load", () => {
     sendLog({ msg: `[main] renderer loaded: ${win?.webContents.getURL()}` });
@@ -127,7 +137,19 @@ function createWindow() {
   });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 }
+function notifyWorkerWebviewReady(id) {
+  lastWebviewGuestId = id;
+  if (worker) {
+    worker.postMessage({ type: "webview-ready", webContentsId: id });
+  }
+}
 import_electron.app.whenReady().then(createWindow);
+import_electron.app.on("web-contents-created", (_event, contents) => {
+  if (contents.getType() === "webview") {
+    notifyWorkerWebviewReady(contents.id);
+    contents.once("dom-ready", () => notifyWorkerWebviewReady(contents.id));
+  }
+});
 import_electron.app.on("window-all-closed", () => {
   if (process.platform !== "darwin") import_electron.app.quit();
 });
@@ -152,6 +174,13 @@ import_electron.ipcMain.handle("agent:resume", async () => {
   worker?.postMessage({ type: "resume" });
   return { ok: true };
 });
+import_electron.ipcMain.handle("webview:ready", (_e, id) => {
+  latestWebviewId = id;
+  sendLog({ msg: `[main] webview:ready (guest id=${id})` });
+  worker?.postMessage({ type: "webview-ready", webContentsId: id });
+  return { ok: true };
+});
+import_electron.ipcMain.handle("webview:get-latest", () => latestWebviewId);
 import_electron.ipcMain.handle("shell:showInFolder", (_e, filePath) => import_electron.shell.showItemInFolder(filePath));
 import_electron.ipcMain.handle("alpha:hello", () => "ok");
 //# sourceMappingURL=main.js.map

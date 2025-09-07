@@ -2,13 +2,13 @@ import { parentPort } from "node:worker_threads";
 import { runGoal } from "./run.js";
 import type { Step } from "./graph.js";
 import { chromium, Browser, BrowserContext, Page } from "playwright";
-import {assertNoLaunch} from "./browser.js";
+//import {assertNoLaunch} from "./browser.js";
 
 
 if (!parentPort) process.exit(1);
 let pausedResolve: null | (() => void) = null;
 
-assertNoLaunch();
+//assertNoLaunch();
 
 const UI_ORIGINS = [
     /^http:\/\/localhost:5173/i,      // dev

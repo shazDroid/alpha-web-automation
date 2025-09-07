@@ -14,6 +14,7 @@ import_electron.contextBridge.exposeInMainWorld("alpha", {
     return () => import_electron.ipcRenderer.removeListener("agent:log", h);
   },
   showInFolder: (filePath) => import_electron.ipcRenderer.invoke("shell:showInFolder", filePath),
-  hello: () => import_electron.ipcRenderer.invoke("alpha:hello")
+  hello: () => import_electron.ipcRenderer.invoke("alpha:hello"),
+  notifyWebviewReady: (guestId) => import_electron.ipcRenderer.invoke("webview:ready", guestId)
 });
 //# sourceMappingURL=preload.js.map

@@ -15,4 +15,5 @@ contextBridge.exposeInMainWorld("alpha", {
   },
   showInFolder: (filePath: string) => ipcRenderer.invoke("shell:showInFolder", filePath),
   hello: () => ipcRenderer.invoke("alpha:hello"),
+  notifyWebviewReady: (guestId: number) => ipcRenderer.invoke("webview:ready", guestId)
 });
