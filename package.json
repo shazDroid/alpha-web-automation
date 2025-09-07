@@ -1,0 +1,30 @@
+{
+  "name": "alpha-web-automation",
+  "private": true,
+  "workspaces": [
+    "apps/desktop",
+    "packages/agent",
+    "packages/shared"
+  ],
+  "scripts": {
+    "dev:ui": "npm run dev --prefix apps/desktop/ui",
+    "build:ui": "npm run build --prefix apps/desktop/ui",
+    "preview:ui": "npm run preview --prefix apps/desktop/ui",
+    "dev:electron": "cross-env ELECTRON_START_URL=http://localhost:5173 electron .",
+    "dev": "npm run dev --prefix apps/desktop"
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.75",
+    "@langchain/langgraph": "^0.4.9",
+    "@tabler/icons-react": "^3.34.1",
+    "playwright": "^1.55.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.2",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.4"
+  }
+}

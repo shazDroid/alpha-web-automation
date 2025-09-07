@@ -1,0 +1,36 @@
+{
+  "name": "@alpha/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": ".electron/main.js",
+"scripts": {
+  "dev": "concurrently -k -r \"vite\" \"npm:dev:electron\" \"npm:dev:preload\" \"npx wait-on tcp:5173 file:.electron/main.js file:.electron/preload.js && npx electron .\"",
+  "dev:electron": "esbuild electron/main.ts --bundle --platform=node --format=cjs --outfile=.electron/main.js --sourcemap --watch --external:electron --external:fs --external:path --external:@alpha/agent --external:playwright --external:playwright-core --external:chromium-bidi",
+  "dev:preload": "esbuild electron/preload.ts --bundle --platform=node --format=cjs --outfile=.electron/preload.js --sourcemap --watch --external:electron --external:fs --external:path",
+  "build": "vite build --config vite.config.mjs && npm run build:electron && npm run build:preload",
+  "build:electron": "esbuild electron/main.ts --bundle --platform=node --format=cjs --outfile=.electron/main.js --minify --external:electron --external:fs --external:path --external:@alpha/agent --external:playwright --external:playwright-core --external:chromium-bidi",
+  "build:preload": "esbuild electron/preload.ts --bundle --platform=node --format=cjs --outfile=.electron/preload.js --minify --external:electron --external:fs --external:path",
+  "start": "electron ."
+},
+  "dependencies": {
+    "@emotion/react": "^11.13.3",
+    "@mantine/core": "^7.12.1",
+    "@mantine/hooks": "^7.12.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.13",
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.22",
+    "@vitejs/plugin-react": "^5.0.2",
+    "concurrently": "^8.2.2",
+    "electron": "^30.0.9",
+    "esbuild": "^0.25.9",
+    "tsx": "^4.19.2",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.1",
+    "vite-plugin-electron": "^0.29.0",
+    "wait-on": "^7.2.0"
+  }
+}

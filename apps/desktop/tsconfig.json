@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "@alpha/agent": ["../../packages/agent/src/index.ts"],
+      "@alpha/shared/*": ["../../packages/shared/src/*"]
+    }
+  },
+  "include": ["electron", "src", "vite.config.ts"]
+}
