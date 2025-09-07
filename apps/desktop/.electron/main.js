@@ -121,6 +121,11 @@ function createWindow() {
   } else {
     win.loadFile(import_node_path.default.join(__dirname, "../index.html"));
   }
+  win.webContents.on("will-navigate", (e, url) => {
+    const isAppUrl = devUrl && url.startsWith(devUrl) || url.startsWith("file://");
+    if (!isAppUrl) e.preventDefault();
+  });
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 }
 import_electron.app.whenReady().then(createWindow);
 import_electron.app.on("window-all-closed", () => {

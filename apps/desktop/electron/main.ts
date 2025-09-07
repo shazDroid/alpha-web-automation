@@ -29,51 +29,6 @@ function agentPackageJson(): any {
   try { return JSON.parse(fs.readFileSync(pkg, "utf8")); } catch { return null; }
 }
 
-function resolveWorkerEntrypoint(): {
-  entry: string;
-  type?: "module" | "commonjs";
-  execArgv?: string[];
-} {
-  const base = agentBaseDir();
-  const exts = [".js", ".mjs", ".cjs"];
-
-  const findFirst = (relNoExt: string) => {
-    for (const ext of exts) {
-      const p = path.join(base, relNoExt + ext);
-      if (fs.existsSync(p)) return p;
-    }
-    return null;
-  };
-
-  const pkg = agentPackageJson();
-  const isESM = pkg?.type === "module";
-
-  const distWorker = findFirst("dist/worker");
-  const distRun    = findFirst("dist/run");
-
-  // Only use dist when the build is complete (worker + run)
-  if (distWorker && distRun) {
-    return { entry: distWorker, type: isESM ? "module" : "commonjs" };
-  }
-
-  // Dev fallback: run TS directly with ts-node ESM loader
-  const srcWorker = path.join(base, "src", "worker.ts");
-  if (fs.existsSync(srcWorker)) {
-    return {
-      entry: srcWorker,
-      type: "module",
-      execArgv: ["--loader", "ts-node/esm"], // <— THIS is critical
-    };
-  }
-
-  throw new Error(
-      `Agent worker entry not found.
-     Tried:
-       - ${path.join(base, "dist/worker.(js|mjs|cjs)")}
-       - ${path.join(base, "dist/run.(js|mjs|cjs)")}
-       - ${srcWorker}`
-  );
-}
 
 function agentBaseDir(): string {
   const candidates = [
@@ -165,6 +120,17 @@ function createWindow() {
   } else {
     win.loadFile(path.join(__dirname, "../index.html"));
   }
+
+  // Prevent the app shell (main renderer) from navigating away
+  win.webContents.on("will-navigate", (e, url) => {
+    const isAppUrl =
+        (devUrl && url.startsWith(devUrl)) ||
+        url.startsWith("file://");
+    if (!isAppUrl) e.preventDefault();
+  });
+
+// Also deny window.open() from replacing our shell
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 }
 
 /* ---------- app lifecycle ---------- */

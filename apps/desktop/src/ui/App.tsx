@@ -360,6 +360,7 @@ export default function App() {
               </Group>
               <webview
                   id="alpha-webview"
+                  partition="persist:agent"
                   style={{ width: '100%', height: '72vh', border: '1px solid #eee', borderRadius: 8 }}
                   src={url}
                   allowpopups

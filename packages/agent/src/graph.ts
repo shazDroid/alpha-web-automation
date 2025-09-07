@@ -1,6 +1,8 @@
 import type { Page } from "playwright";
 import { chromium } from "playwright";
 import { StateGraph, Annotation, START, END } from "@langchain/langgraph";
+import { getAttachedPage } from "./browser.js";
+
 
 type PWLoadState = "load" | "domcontentloaded" | "networkidle";
 
@@ -146,7 +148,6 @@ export function buildGraph() {
 }
 
 export async function launchBrowser() {
-    const browser = await chromium.launch({ headless: false });
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const { browser, context, page } = await getAttachedPage();
     return { browser, page };
 }

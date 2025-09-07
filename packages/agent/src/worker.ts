@@ -2,43 +2,67 @@ import { parentPort } from "node:worker_threads";
 import { runGoal } from "./run.js";
 import type { Step } from "./graph.js";
 import { chromium, Browser, BrowserContext, Page } from "playwright";
+import {assertNoLaunch} from "./browser.js";
 
 
 if (!parentPort) process.exit(1);
 let pausedResolve: null | (() => void) = null;
 
-async function attachToEmbeddedWebview(): Promise<{
-    browser: Browser;
-    context: BrowserContext;
-    page: Page;
-}> {
-    // Attach to Electron (port set in main.ts)
+assertNoLaunch();
+
+const UI_ORIGINS = [
+    /^http:\/\/localhost:5173/i,      // dev
+    /^file:.*\/index\.html$/i         // packaged
+];
+
+const isSystemUrl = (u: string) => /^chrome:|^devtools:|^edge:/.test(u);
+const isUiUrl     = (u: string) => UI_ORIGINS.some(r => r.test(u));
+
+async function attachToEmbeddedWebview(): Promise<{ browser: Browser; context: BrowserContext; page: Page }> {
+    // Connect to the Electron instance (main added remote-debugging-port 9222)
     const browser = await chromium.connectOverCDP("http://localhost:9222");
 
-    // Electron usually exposes a single default context
-    const [context = browser.contexts()[0]] = browser.contexts();
+    // Try to find an existing webview page (non-system and not our UI)
+    const pickExisting = () => {
+        for (const ctx of browser.contexts()) {
+            const page = ctx.pages().find(p => {
+                const u = p.url();
+                return u && !isSystemUrl(u) && !isUiUrl(u);
+            });
+            if (page) return { context: ctx, page };
+        }
+        return null;
+    };
 
-    // Helper: pick a real web page (not chrome:// or devtools://)
-    const pick = (pages: Page[]) =>
-        pages.find(p => !/^chrome:|^devtools:/.test(p.url())) ?? pages[pages.length - 1];
+    const found = pickExisting();
+    if (found) return { browser, context: found.context, page: found.page };
 
-    let page = pick(context.pages());
+    // If not found yet, wait for the next guest page to appear
+    const waiter = new Promise<{ context: BrowserContext; page: Page }>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Timed out waiting for webview target")), 10000);
 
-    // If the <webview> target isn’t ready yet, wait briefly for it
-    if (!page) {
-        page = await new Promise<Page>((resolve, reject) => {
-            const timeout = setTimeout(() => reject(new Error("Timed out waiting for webview target")), 6000);
-            context.once("page", (p) => {
-                if (!/^chrome:|^devtools:/.test(p.url())) {
-                    clearTimeout(timeout);
-                    resolve(p);
+        for (const ctx of browser.contexts()) {
+            ctx.on("page", (p) => {
+                const u = p.url();
+                if (!isSystemUrl(u) && !isUiUrl(u)) {
+                    clearTimeout(timer);
+                    resolve({ context: ctx, page: p });
                 }
             });
-        });
-    }
+        }
+    });
 
+    const { context, page } = await waiter;
     return { browser, context, page };
 }
+
+let attachedOnce: { browser: Browser; context: BrowserContext; page: Page } | null = null;
+
+export async function getAttachedPage(): Promise<Page> {
+    if (!attachedOnce) attachedOnce = await attachToEmbeddedWebview();
+    return attachedOnce.page;
+}
+
 
 
 parentPort.on("message", async (msg: any) => {

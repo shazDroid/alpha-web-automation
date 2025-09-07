@@ -1,6 +1,8 @@
 import { Page, Frame } from 'playwright'
 import * as path from 'path'
 import * as fs from 'fs'
+import { getAttachedPage } from "./browser.js";
+
 
 // Normalize container to a Page (Frame → Page)
 function asPage(container: Page | Frame): Page {
